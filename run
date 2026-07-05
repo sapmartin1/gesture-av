@@ -1,0 +1,10 @@
+#!/bin/bash
+# GestureAV launcher — runs in its own Python 3.11 venv.
+cd "$(dirname "$0")" || exit 1
+if [ ! -f models/hand_landmarker.task ]; then
+  echo "↓ fetching hand model (one time)…"
+  mkdir -p models
+  curl -sSL -o models/hand_landmarker.task \
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+fi
+exec ./venv/bin/python gesture_av.py "$@"
