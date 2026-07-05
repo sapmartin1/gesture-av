@@ -1,0 +1,10 @@
+#!/bin/bash
+# Serve the GestureAV DAW on localhost (Web MIDI + Web Audio need a secure
+# context; localhost qualifies) and open it in the default browser.
+cd "$(dirname "$0")" || exit 1
+PORT="${1:-8777}"
+URL="http://localhost:${PORT}/index.html"
+echo "▸ GestureAV DAW → ${URL}"
+echo "  (Chrome recommended for Web MIDI. Ctrl+C to stop.)"
+( sleep 1; open "$URL" 2>/dev/null || xdg-open "$URL" 2>/dev/null ) &
+exec python3 -m http.server "$PORT"

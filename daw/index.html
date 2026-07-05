@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GestureAV — DAW</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="viz"></canvas>
+
+  <header class="topbar glass">
+    <div class="brand">
+      <span class="logo">◈</span>
+      <span class="title">GestureAV</span>
+      <span class="sub">/ studio</span>
+    </div>
+    <div id="midi-status" class="midi">○ connecting…</div>
+    <div class="vol-wrap">
+      <span>VOL</span>
+      <input id="vol" type="range" min="0" max="0.9" step="0.01" value="0.5" />
+    </div>
+  </header>
+
+  <section id="presets" class="presets glass"></section>
+
+  <section id="knobs" class="knobs glass"></section>
+
+  <footer class="kb-wrap glass">
+    <div id="keyboard" class="keyboard"></div>
+    <p class="hint">Play with your hands (pinch), a MIDI device, or your computer keyboard
+      <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd>… &nbsp; Left hand → mod / brightness.</p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -41,6 +41,31 @@ Left hand's CC1/CC74 map to mod-wheel and filter on most synths — sweep away.
 
 No DAW? Try the visuals alone: **`./run --no-midi`**.
 
+## 🎛️ Bundled DAW (no Ableton needed)
+
+The repo ships its own browser DAW — polyphonic synth, 5 presets (Warm Keys,
+Analog Pad, Deep Bass, Pluck, Lead), macro knobs, an on-screen keyboard, and a
+captivating audio-reactive visualizer. Ableton-inspired, glassmorphic, modern.
+
+**Best combo — hands play the DAW while it draws the visuals:**
+
+```bash
+# terminal 1 — gestures → MIDI, no python window
+./run --no-visuals
+# terminal 2 — the DAW (opens in your browser)
+./daw/serve
+```
+
+Now pinch in the air and the browser DAW plays + reacts. It **auto-connects** to
+the `GestureAV` MIDI port (you'll see "● GestureAV" light up top-right).
+
+**Also playable on its own** — open `./daw/serve` and use your mouse or the
+computer keyboard (`A S D F …` = white keys, `W E T Y U` = black). Your left
+hand's mod/brightness map to the synth's filter live.
+
+> Use **Chrome** — Web MIDI (to hear your gestures) is Chrome-only. Web Audio
+> (mouse/keyboard playing + visuals) works in any modern browser.
+
 ## Options
 ```
 ./run --camera 1        # if the built-in cam isn't index 0
