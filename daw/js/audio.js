@@ -68,6 +68,11 @@ export class Engine {
     vol.connect(sendD); sendD.connect(this.delay);
     vol.connect(sendR); sendR.connect(this.reverb);
 
+    // per-track level meter tap
+    const meter = ctx.createAnalyser();
+    meter.fftSize = 256;
+    pan.connect(meter);
+
     const setDrive = (amt) => {                       // 0..1
       shaper._amount = amt;
       if (amt <= 0.01) { shaper.curve = null; return; }
@@ -79,10 +84,19 @@ export class Engine {
       shaper.curve = curve;
     };
 
+    const meterBuf = new Uint8Array(meter.fftSize);
     return {
-      input,
-      set: (param, v) => {
-        const t = this.now();
+      input, meter,
+      level: () => {                                  // 0..1 RMS for the meters
+        meter.getByteTimeDomainData(meterBuf);
+        let sum = 0;
+        for (let i = 0; i < meterBuf.length; i++) {
+          const d = (meterBuf[i] - 128) / 128; sum += d * d;
+        }
+        return Math.min(1, Math.sqrt(sum / meterBuf.length) * 2.5);
+      },
+      set: (param, v, when) => {
+        const t = when || this.now();
         if (param === "cutoff") filter.frequency.setTargetAtTime(v, t, 0.02);
         else if (param === "res") filter.Q.setTargetAtTime(v, t, 0.02);
         else if (param === "drive") setDrive(v);
@@ -93,6 +107,16 @@ export class Engine {
       },
       dispose: () => { try { input.disconnect(); vol.disconnect(); } catch (e) {} },
     };
+  }
+
+  masterLevel() {
+    if (!this._mBuf) this._mBuf = new Uint8Array(this.analyser.fftSize);
+    this.analyser.getByteTimeDomainData(this._mBuf);
+    let sum = 0;
+    for (let i = 0; i < this._mBuf.length; i++) {
+      const d = (this._mBuf[i] - 128) / 128; sum += d * d;
+    }
+    return Math.min(1, Math.sqrt(sum / this._mBuf.length) * 2.5);
   }
 
   // ---- master bounce ---------------------------------------------------------

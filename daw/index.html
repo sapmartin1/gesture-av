@@ -13,6 +13,7 @@
     <div class="tgroup">
       <label class="num"><span>BPM</span><input id="bpm" type="number" min="40" max="220" value="110" /></label>
       <button id="metro" class="tbtn" title="metronome">🜁</button>
+      <label class="num"><span>SWING</span><input id="swing" type="range" min="0" max="0.6" step="0.01" value="0" /></label>
     </div>
     <div class="tgroup">
       <button id="play" class="tbtn big" title="play">▶</button>
@@ -20,12 +21,18 @@
       <button id="rec" class="tbtn big rec" title="record into playing clip on armed track">●</button>
     </div>
     <div class="tgroup"><span id="pos" class="pos">1.1</span></div>
+    <div class="tgroup view">
+      <button id="view-session" class="tbtn on">Session</button>
+      <button id="view-arr" class="tbtn">Arrange</button>
+    </div>
     <div class="tgroup right">
       <span id="midi-status" class="midi">○ MIDI</span>
-      <button id="bounce" class="tbtn" title="record master output to a file">⤓ Bounce</button>
+      <button id="wav" class="tbtn" title="render the arrangement to a .wav file">⤓ WAV</button>
+      <button id="bounce" class="tbtn" title="live-record master output">● Bounce</button>
       <button id="save" class="tbtn">Save</button>
       <button id="load" class="tbtn">Load</button>
       <label class="num"><span>MASTER</span><input id="mastervol" type="range" min="0" max="1" step="0.01" value="0.8" /></label>
+      <div class="vu"><i id="vu-bar"></i></div>
     </div>
   </header>
 
@@ -46,6 +53,15 @@
     <section id="session">
       <div id="grid"><!-- track columns + scene column injected --></div>
     </section>
+
+    <!-- ── arrangement view ────────────────────────────────────────────── -->
+    <section id="arrange" class="hidden">
+      <div id="arr-gutter"></div>
+      <div id="arr-scroll">
+        <canvas id="arr-canvas"></canvas>
+        <div id="arr-playhead"></div>
+      </div>
+    </section>
   </div>
 
   <!-- ── detail / device view ────────────────────────────────────────────── -->
@@ -61,7 +77,7 @@
     </div>
   </footer>
 
-  <div id="hint">Pinch (armed track) · QWERTY <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd>… plays · click clip slots to launch (bar-quantized) · double-click empty slot = new clip</div>
+  <div id="hint">Pinch (armed track) · QWERTY <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd>… plays · slots launch bar-quantized · dbl-click empty slot = new clip · Arrange: click = place selected clip, click block = remove, A = automation lane</div>
 
   <script type="module" src="js/app.js"></script>
 </body>

@@ -16,6 +16,8 @@ export class Transport {
   constructor(engine) {
     this.engine = engine;
     this.bpm = 110;
+    this.swing = 0;                        // 0..0.6 — delays odd 16ths
+    this.mode = "session";                 // "session" | "arr"
     this.playing = false;
     this.recording = false;
     this.metronome = false;
@@ -25,9 +27,16 @@ export class Transport {
     this.tracks = [];
     this.onStep = null;                    // (globalStep) => UI playheads
     this.onLaunchChange = null;            // () => UI slot states
+    this.autoValueAt = null;               // injected (render.js) for live automation
+    this.autoParams = null;
   }
 
   stepDur() { return 60 / this.bpm / 4; }
+
+  arrEndBars() {
+    return Math.max(4, ...this.tracks.flatMap((t) =>
+      (t.arr || []).map((p) => p.startBar + (t.clips[p.scene] ? t.clips[p.scene].bars : 0))));
+  }
 
   start() {
     this.engine.resume();
@@ -73,9 +82,13 @@ export class Transport {
     }
   }
 
-  _schedule(step, when) {
-    // bar boundary: promote queued launches/stops
-    if (step % STEPS_PER_BAR === 0) {
+  _schedule(rawStep, rawWhen) {
+    const when = rawWhen + (rawStep % 2 ? this.swing * this.stepDur() * 0.5 : 0);
+    const step = this.mode === "arr"
+      ? rawStep % (this.arrEndBars() * STEPS_PER_BAR)   // loop the arrangement
+      : rawStep;
+
+    if (this.mode === "session" && step % STEPS_PER_BAR === 0) {
       let changed = false;
       for (const tr of this.tracks) {
         if (tr.queued === "stop") { tr.playing = null; tr.queued = null; changed = true; }
@@ -92,24 +105,47 @@ export class Transport {
 
     const solo = this.tracks.some((t) => t.solo);
     for (const tr of this.tracks) {
-      if (!tr.playing || tr.mute || (solo && !tr.solo)) continue;
-      const clip = tr.clips[tr.playing.scene];
-      if (!clip) continue;
-      const pos = (step - tr.playing.startStep) % clipLen(clip);
-      if (clip.kind === "drums") {
-        clip.steps.forEach((lane, li) => {
-          const v = lane[pos];
-          if (v) tr.inst.trigger(tr.laneNames[li], v, when);
-        });
-      } else {
-        for (const n of clip.notes) {
-          if (n.step === pos) tr.inst.noteOn(n.note, n.vel, when, n.len * this.stepDur());
+      if (tr.mute || (solo && !tr.solo)) continue;
+
+      // live automation (arrangement mode, once per beat)
+      if (this.mode === "arr" && tr.auto && tr.auto.param && tr.auto.points.length
+          && step % 4 === 0 && this.autoValueAt && this.autoParams) {
+        const spec = this.autoParams[tr.auto.param];
+        tr.chain.set(tr.auto.param,
+          spec.denorm(this.autoValueAt(tr.auto.points, step / STEPS_PER_BAR)), when);
+      }
+
+      if (this.mode === "arr") {
+        for (const pl of tr.arr || []) {
+          const clip = tr.clips[pl.scene];
+          if (!clip) continue;
+          const s0 = pl.startBar * STEPS_PER_BAR;
+          if (step < s0 || step >= s0 + clipLen(clip)) continue;
+          this._playClipStep(tr, clip, step - s0, when);
         }
+      } else {
+        if (!tr.playing) continue;
+        const clip = tr.clips[tr.playing.scene];
+        if (!clip) continue;
+        this._playClipStep(tr, clip, (step - tr.playing.startStep) % clipLen(clip), when);
       }
     }
     if (this.onStep) {
       const dt = Math.max(0, (when - this.engine.now()) * 1000);
       setTimeout(() => this.playing && this.onStep(step), dt);
+    }
+  }
+
+  _playClipStep(tr, clip, pos, when) {
+    if (clip.kind === "drums") {
+      clip.steps.forEach((lane, li) => {
+        const v = lane[pos];
+        if (v) tr.inst.trigger(tr.laneNames[li], v, when);
+      });
+    } else {
+      for (const n of clip.notes) {
+        if (n.step === pos) tr.inst.noteOn(n.note, n.vel, when, n.len * this.stepDur());
+      }
     }
   }
 

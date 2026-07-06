@@ -4,10 +4,14 @@
 import { Engine } from "./audio.js";
 import { SynthInst, DrumKit, Sampler, SYNTH_PRESETS, DRUM_LANES } from "./instruments.js";
 import { Transport, melodicClip, drumClip, clipLen, N_SCENES, STEPS_PER_BAR } from "./sequencer.js";
+import { renderArrangementWav, autoValueAt } from "./render.js";
+import { AUTO_PARAMS, emptyAuto, togglePoint } from "./automation.js";
 
 const $ = (id) => document.getElementById(id);
 const engine = new Engine();
 const transport = new Transport(engine);
+transport.autoValueAt = autoValueAt;
+transport.autoParams = AUTO_PARAMS;
 
 const CLIP_COLORS = ["#e8a33d", "#63b1d9", "#a778d9", "#6fce8e", "#d97878", "#c9c25a"];
 const state = { tracks: [], sel: null, selScene: 0, noteLen: 1, bouncing: false };
@@ -26,6 +30,8 @@ function addTrack(type, presetName) {
     laneNames: DRUM_LANES,
     params: { cutoff: 18000, res: 0.8, drive: 0, vol: 0.9, pan: 0, delay: 0, reverb: 0 },
     clips: Array(N_SCENES).fill(null),
+    arr: [],                              // arrangement placements {scene, startBar}
+    auto: emptyAuto(),                    // automation lane {param, points}
     mute: false, solo: false, arm: state.tracks.every((t) => !t.arm),
     playing: null, queued: null,
     color: CLIP_COLORS[(trackSeq - 1) % CLIP_COLORS.length],
@@ -102,6 +108,7 @@ function renderGrid() {
         <button class="mbtn arm ${tr.arm ? "on" : ""}">●</button>
         <button class="mbtn mute ${tr.mute ? "on" : ""}">M</button>
         <button class="mbtn solo ${tr.solo ? "on" : ""}">S</button>
+        <div class="meterwrap"><i class="lvl" data-tid="${tr.id}"></i></div>
       </div>
       <input type="range" class="tvol" min="0" max="1.2" step="0.01" value="${tr.params.vol}" />
       <div class="mlab"><span>vol</span><span>pan</span></div>
@@ -351,6 +358,178 @@ Object.keys(SYNTH_PRESETS).forEach((p) => {
 document.querySelectorAll("[data-add]").forEach((li) =>
   li.onclick = () => addTrack(li.dataset.add));
 
+/* ════════ arrangement view ════════ */
+const ARR_BARS = 32, BAR_W = 34, LANE_H = 46, AUTO_H = 36, RULER_H = 20;
+
+function arrRows() {
+  // layout rows: for each track a lane, plus an automation sublane if enabled
+  const rows = [];
+  let y = RULER_H;
+  for (const tr of state.tracks) {
+    rows.push({ tr, kind: "lane", y, h: LANE_H }); y += LANE_H;
+    if (tr.auto.param) { rows.push({ tr, kind: "auto", y, h: AUTO_H }); y += AUTO_H; }
+  }
+  return { rows, height: y };
+}
+
+function renderArrGutter() {
+  const g = $("arr-gutter");
+  g.innerHTML = `<div class="gcell ruler"></div>`;
+  for (const tr of state.tracks) {
+    const c = document.createElement("div");
+    c.className = "gcell" + (state.sel === tr ? " sel" : "");
+    c.style.height = LANE_H + "px";
+    c.innerHTML = `<span class="gname" style="--cc:${tr.color}">${tr.name}</span>
+      <button class="gauto ${tr.auto.param ? "on" : ""}" title="automation lane">A</button>`;
+    c.querySelector(".gname").onclick = () => { selectTrack(tr, null); renderArr(); };
+    c.querySelector(".gauto").onclick = () => {
+      tr.auto.param = tr.auto.param ? null : "cutoff";
+      renderArr();
+    };
+    g.appendChild(c);
+    if (tr.auto.param) {
+      const a = document.createElement("div");
+      a.className = "gcell autocell";
+      a.style.height = AUTO_H + "px";
+      const sel = document.createElement("select");
+      Object.entries(AUTO_PARAMS).forEach(([k, spec]) => {
+        const o = document.createElement("option");
+        o.value = k; o.textContent = spec.label; o.selected = tr.auto.param === k;
+        sel.appendChild(o);
+      });
+      sel.onchange = () => { tr.auto.param = sel.value; renderArr(); };
+      a.appendChild(sel);
+      g.appendChild(a);
+    }
+  }
+}
+
+function renderArr() {
+  if (state.view !== "arr") return;
+  renderArrGutter();
+  const { rows, height } = arrRows();
+  const cv = $("arr-canvas"), ctx = cv.getContext("2d");
+  cv.width = ARR_BARS * BAR_W; cv.height = Math.max(height, 200);
+  ctx.fillStyle = "#1d1d1d"; ctx.fillRect(0, 0, cv.width, cv.height);
+
+  // ruler
+  ctx.fillStyle = "#222"; ctx.fillRect(0, 0, cv.width, RULER_H);
+  for (let b = 0; b <= ARR_BARS; b++) {
+    ctx.fillStyle = b % 4 === 0 ? "#555" : "#333";
+    ctx.fillRect(b * BAR_W, 0, 1, cv.height);
+    if (b % 4 === 0 && b < ARR_BARS) {
+      ctx.fillStyle = "#888"; ctx.font = "9px sans-serif";
+      ctx.fillText(b + 1, b * BAR_W + 4, 13);
+    }
+  }
+
+  for (const row of rows) {
+    ctx.fillStyle = row.kind === "lane" ? "#212121" : "#1a2027";
+    ctx.fillRect(0, row.y, cv.width, row.h - 2);
+    if (row.kind === "lane") {
+      for (const pl of row.tr.arr) {
+        const clip = row.tr.clips[pl.scene];
+        if (!clip) continue;
+        const x = pl.startBar * BAR_W, w = clip.bars * BAR_W;
+        ctx.fillStyle = row.tr.color;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(x + 1, row.y + 3, w - 2, row.h - 9);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#111"; ctx.font = "bold 9.5px sans-serif";
+        ctx.fillText(clip.name.slice(0, Math.floor(w / 7)), x + 5, row.y + 17);
+      }
+    } else {
+      // automation polyline
+      const pts = [...row.tr.auto.points].sort((a, b) => a.bar - b.bar);
+      ctx.strokeStyle = "#63b1d9"; ctx.lineWidth = 1.5; ctx.beginPath();
+      const val = (b) => autoValueAt(pts, b);
+      for (let b = 0; b <= ARR_BARS; b += 0.25) {
+        const x = b * BAR_W, y = row.y + (1 - (pts.length ? val(b) : 0.5)) * (row.h - 8) + 3;
+        b === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      for (const p of pts) {
+        ctx.fillStyle = "#63b1d9";
+        ctx.beginPath();
+        ctx.arc(p.bar * BAR_W, row.y + (1 - p.v) * (row.h - 8) + 3, 3.2, 0, 7);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+$("arr-canvas").addEventListener("mousedown", (e) => {
+  const rect = e.target.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const { rows } = arrRows();
+  const row = rows.find((r) => y >= r.y && y < r.y + r.h);
+  if (!row) return;
+  const bar = Math.floor(x / BAR_W);
+  if (row.kind === "auto") {
+    const v = Math.max(0, Math.min(1, 1 - (y - row.y - 3) / (row.h - 8)));
+    togglePoint(row.tr.auto, x / BAR_W, v);
+    renderArr();
+    return;
+  }
+  const tr = row.tr;
+  const hit = tr.arr.find((pl) => {
+    const clip = tr.clips[pl.scene];
+    return clip && bar >= pl.startBar && bar < pl.startBar + clip.bars;
+  });
+  if (hit) { tr.arr.splice(tr.arr.indexOf(hit), 1); }
+  else {
+    const scene = state.sel === tr ? state.selScene : tr.clips.findIndex(Boolean);
+    const clip = tr.clips[scene];
+    if (!clip) return;
+    const overlaps = tr.arr.some((pl) => {
+      const c2 = tr.clips[pl.scene];
+      return c2 && bar < pl.startBar + c2.bars && bar + clip.bars > pl.startBar;
+    });
+    if (!overlaps) tr.arr.push({ scene, startBar: bar });
+  }
+  renderArr();
+});
+
+/* ════════ view switching ════════ */
+state.view = "session";
+function setView(v) {
+  state.view = v;
+  transport.mode = v === "arr" ? "arr" : "session";
+  $("session").classList.toggle("hidden", v === "arr");
+  $("arrange").classList.toggle("hidden", v !== "arr");
+  $("view-session").classList.toggle("on", v === "session");
+  $("view-arr").classList.toggle("on", v === "arr");
+  if (v === "arr") renderArr();
+}
+$("view-session").onclick = () => setView("session");
+$("view-arr").onclick = () => setView("arr");
+
+/* ════════ WAV export ════════ */
+$("wav").onclick = async () => {
+  const hasArr = state.tracks.some((t) => t.arr.length);
+  if (!hasArr) return alert("Place clips in the Arrange view first — WAV renders the arrangement.");
+  $("wav").textContent = "rendering…";
+  try {
+    const { url, bars } = await renderArrangementWav(state.tracks,
+      { bpm: transport.bpm, swing: transport.swing });
+    const a = document.createElement("a");
+    a.href = url; a.download = `gestureav-${bars}bars.wav`; a.click();
+  } catch (e) { alert("render failed: " + e.message); }
+  $("wav").textContent = "⤓ WAV";
+};
+
+/* ════════ level meters ════════ */
+function meterLoop() {
+  document.querySelectorAll(".lvl").forEach((el) => {
+    const tr = state.tracks.find((t) => t.id === +el.dataset.tid);
+    if (tr) el.style.height = `${tr.chain.level() * 100}%`;
+  });
+  const vu = $("vu-bar");
+  if (vu) vu.style.width = `${engine.masterLevel() * 100}%`;
+  requestAnimationFrame(meterLoop);
+}
+requestAnimationFrame(meterLoop);
+
 /* ════════ transport UI ════════ */
 $("play").onclick = () => { transport.start(); $("play").classList.add("on"); };
 $("stop").onclick = () => { transport.stop(); $("play").classList.remove("on"); $("rec").classList.remove("on"); };
@@ -360,6 +539,7 @@ $("rec").onclick = () => {
   if (transport.recording && !transport.playing) transport.start(), $("play").classList.add("on");
 };
 $("bpm").onchange = (e) => (transport.bpm = Math.max(40, Math.min(220, +e.target.value)));
+$("swing").oninput = (e) => (transport.swing = +e.target.value);
 $("metro").onclick = () => { transport.metronome = !transport.metronome; $("metro").classList.toggle("on", transport.metronome); };
 $("mastervol").oninput = (e) => engine.master.gain.setTargetAtTime(+e.target.value, engine.now(), 0.02);
 
@@ -376,10 +556,17 @@ $("bounce").onclick = async () => {
 };
 
 transport.onStep = (step) => {
-  if (step < 0) { $("pos").textContent = "1.1"; renderEditor(-1); updateProg(); return; }
+  const ph = $("arr-playhead");
+  if (step < 0) {
+    $("pos").textContent = "1.1"; renderEditor(-1); updateProg();
+    ph.style.display = "none"; return;
+  }
   const bar = Math.floor(step / STEPS_PER_BAR) + 1, beat = Math.floor((step % STEPS_PER_BAR) / 4) + 1;
   $("pos").textContent = `${bar}.${beat}`;
-  if (state.sel && state.sel.playing && state.sel.playing.scene === state.selScene) {
+  if (state.view === "arr") {
+    ph.style.display = "block";
+    ph.style.transform = `translateX(${(step / STEPS_PER_BAR) * BAR_W}px)`;
+  } else if (state.sel && state.sel.playing && state.sel.playing.scene === state.selScene) {
     renderEditor(transport.trackPos(state.sel));
   }
   if (step % 2 === 0) updateProg();
@@ -460,11 +647,12 @@ addEventListener("keyup", (e) => {
 /* ════════ save / load ════════ */
 $("save").onclick = () => {
   const proj = {
-    bpm: transport.bpm,
+    bpm: transport.bpm, swing: transport.swing,
     tracks: state.tracks.map((t) => ({
       name: t.name, type: t.type,
       preset: t.type === "synth" ? t.inst.presetName : null,
-      params: t.params, clips: t.clips, mute: t.mute, solo: t.solo,
+      params: t.params, clips: t.clips, arr: t.arr, auto: t.auto,
+      mute: t.mute, solo: t.solo,
     })),
   };
   localStorage.setItem("gestureav-live", JSON.stringify(proj));
@@ -483,14 +671,17 @@ function loadProject(proj) {
   transport.stop();
   state.tracks.length = 0; trackSeq = 0;
   transport.bpm = proj.bpm || 110; $("bpm").value = transport.bpm;
+  transport.swing = proj.swing || 0; $("swing").value = transport.swing;
   for (const t of proj.tracks || []) {
     const tr = addTrack(t.type, t.preset || undefined);
     tr.name = t.name; tr.clips = t.clips || tr.clips;
+    tr.arr = t.arr || []; tr.auto = t.auto || emptyAuto();
     tr.mute = !!t.mute; tr.solo = !!t.solo;
     Object.assign(tr.params, t.params || {});
     for (const [k, v] of Object.entries(tr.params)) tr.chain.set(k, v);
   }
   renderGrid(); renderDevices(); renderEditor();
+  if (state.view === "arr") renderArr();
 }
 
 /* ════════ starter project ════════ */
@@ -501,10 +692,20 @@ function starter() {
   [4, 12].forEach((s) => (beat.steps[1][s] = 105));              // snare
   for (let s = 0; s < 16; s += 2) beat.steps[3][s] = 80;         // hats
   dr.clips[0] = beat;
+  dr.arr = [{ scene: 0, startBar: 0 }, { scene: 0, startBar: 1 },
+            { scene: 0, startBar: 2 }, { scene: 0, startBar: 3 }];
+
   const keys = addTrack("synth", "Warm Keys");
-  keys.clips[0] = melodicClip(2, "Keys 1");
+  const mel = melodicClip(2, "Keys 1");
+  [[0, 60, 4], [4, 63, 4], [8, 67, 4], [12, 65, 2], [16, 63, 4], [20, 60, 8]]
+    .forEach(([step, note, len]) => mel.notes.push({ step, note, vel: 96, len }));
+  keys.clips[0] = mel;
+  keys.arr = [{ scene: 0, startBar: 0 }, { scene: 0, startBar: 2 }];
+  keys.auto = { param: "cutoff", points: [{ bar: 0, v: 0.35 }, { bar: 2, v: 0.9 }, { bar: 4, v: 0.5 }] };
+
   selectTrack(dr, 0);
 }
 starter();
 renderGrid(); renderDevices(); renderEditor();
+if (location.hash === "#arr") setView("arr");
 addEventListener("pointerdown", () => engine.resume(), { once: true });
