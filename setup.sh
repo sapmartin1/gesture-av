@@ -33,9 +33,11 @@ if [ ! -f models/hand_landmarker.task ]; then
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 fi
 
-chmod +x run
+chmod +x run make-app.sh 2>/dev/null
+./make-app.sh 2>/dev/null || true
 echo ""
-echo "✅ Done. Next:"
-echo "   1) System Settings → Privacy & Security → Camera → enable your Terminal."
-echo "   2) (For DAW use) open Logic/Ableton and enable the 'GestureAV' MIDI input."
-echo "   3) ./run           (or ./run --no-midi to try visuals only)"
+echo "✅ Done. Easiest way to play:"
+echo "   → Open the GestureAV app from /Applications (Spotlight: 'GestureAV')."
+echo "     It starts tracking + the DAW in Chrome. Allow Camera when asked."
+echo ""
+echo "   (Terminal alternative: ./run  — or ./run --no-visuals + ./daw/serve)"
