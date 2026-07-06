@@ -39,6 +39,7 @@ function addTrack(type, presetName) {
   state.tracks.push(tr);
   selectTrack(tr, 0);
   renderGrid();
+  if (state.view === "arr") renderArr();
   return tr;
 }
 
@@ -47,6 +48,7 @@ function removeTrack(tr) {
   state.tracks.splice(state.tracks.indexOf(tr), 1);
   if (state.sel === tr) state.sel = state.tracks[0] || null;
   renderGrid(); renderDevices(); renderEditor();
+  if (state.view === "arr") renderArr();
 }
 
 function armedTrack() { return state.tracks.find((t) => t.arm); }
@@ -313,7 +315,7 @@ function renderDevices() {
         if (ev === "drop" && e.dataTransfer.files[0]) {
           tr.inst.load(e.dataTransfer.files[0]).then(() => {
             tr.name = tr.inst.name; renderGrid(); renderDevices();
-          });
+          }).catch(() => alert("Couldn't decode that file — drop an audio file (wav/mp3/m4a)."));
         }
       }));
     const nameEl = document.createElement("div");
@@ -457,6 +459,11 @@ function renderArr() {
     }
   }
 }
+
+// keep gutter labels aligned with lanes when the timeline scrolls vertically
+$("arr-scroll").addEventListener("scroll", (e) => {
+  $("arr-gutter").scrollTop = e.target.scrollTop;
+});
 
 $("arr-canvas").addEventListener("mousedown", (e) => {
   const rect = e.target.getBoundingClientRect();
@@ -652,7 +659,7 @@ $("save").onclick = () => {
       name: t.name, type: t.type,
       preset: t.type === "synth" ? t.inst.presetName : null,
       params: t.params, clips: t.clips, arr: t.arr, auto: t.auto,
-      mute: t.mute, solo: t.solo,
+      mute: t.mute, solo: t.solo, arm: t.arm,
     })),
   };
   localStorage.setItem("gestureav-live", JSON.stringify(proj));
@@ -668,7 +675,7 @@ $("load").onclick = () => {
 };
 
 function loadProject(proj) {
-  transport.stop();
+  $("stop").click();                       // stop AND clear play/rec button states
   state.tracks.length = 0; trackSeq = 0;
   transport.bpm = proj.bpm || 110; $("bpm").value = transport.bpm;
   transport.swing = proj.swing || 0; $("swing").value = transport.swing;
@@ -676,10 +683,11 @@ function loadProject(proj) {
     const tr = addTrack(t.type, t.preset || undefined);
     tr.name = t.name; tr.clips = t.clips || tr.clips;
     tr.arr = t.arr || []; tr.auto = t.auto || emptyAuto();
-    tr.mute = !!t.mute; tr.solo = !!t.solo;
+    tr.mute = !!t.mute; tr.solo = !!t.solo; tr.arm = !!t.arm;
     Object.assign(tr.params, t.params || {});
     for (const [k, v] of Object.entries(tr.params)) tr.chain.set(k, v);
   }
+  if (!state.tracks.some((t) => t.arm) && state.tracks[0]) state.tracks[0].arm = true;
   renderGrid(); renderDevices(); renderEditor();
   if (state.view === "arr") renderArr();
 }

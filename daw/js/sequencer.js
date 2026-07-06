@@ -174,7 +174,10 @@ export class Transport {
     if (!clip) return;
     const sd = this.stepDur();
     const len = clipLen(clip);
-    const startFloat = this.step - (this.engine.now() - tOn) / sd - track.playing.startStep;
+    // this.step corresponds to this.nextTime (lookahead), NOT engine.now() —
+    // using now() here biased every recorded note 1-2 sixteenths late.
+    let startFloat = this.step - (this.nextTime - tOn) / sd - track.playing.startStep;
+    if (Math.round(startFloat) % 2) startFloat -= this.swing * 0.5;  // swung grid
     const step = ((Math.round(startFloat) % len) + len) % len;
     if (clip.kind === "drums") {
       const lane = Math.abs(note) % clip.steps.length;
