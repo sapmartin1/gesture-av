@@ -137,7 +137,39 @@ def analyze_and_play(result, midi, state, scale, W, H):
     return render, bursts
 
 
+VIRTUAL_CAMS = ("iphone", "continuity", "camo", "obs", "virtual", "ipad")
+
+
+def pick_camera_index():
+    """Prefer the Mac's BUILT-IN camera over iPhone Continuity Camera etc.
+    macOS often makes the iPhone camera index 0, which surprises everyone."""
+    import subprocess as sp
+    out = sp.run(["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                 capture_output=True, text=True).stderr
+    devices = []
+    in_video = False
+    for line in out.splitlines():
+        if "AVFoundation video devices" in line:
+            in_video = True; continue
+        if "AVFoundation audio devices" in line:
+            break
+        if in_video:
+            m = __import__("re").search(r"\[(\d+)\]\s+(.*)$", line)
+            if m:
+                devices.append((int(m.group(1)), m.group(2).strip()))
+    if devices:
+        real = [d for d in devices
+                if not any(v in d[1].lower() for v in VIRTUAL_CAMS)]
+        chosen = real[0] if real else devices[0]
+        print(f"🎥 camera: [{chosen[0]}] {chosen[1]}"
+              + ("" if real else "  (only virtual cams found)"))
+        return chosen[0]
+    return 0
+
+
 def open_camera(idx, W, H):
+    if idx is None:                      # auto: avoid iPhone/virtual cameras
+        idx = pick_camera_index()
     cap = cv2.VideoCapture(idx)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, W); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
     if not cap.isOpened():
@@ -245,7 +277,8 @@ def run_visual(args, midi, scale):
 
 def main():
     ap = argparse.ArgumentParser(description="Local hand-tracked MIDI instrument.")
-    ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--camera", type=int, default=None,
+                    help="camera index; default auto-picks the built-in (skips iPhone)")
     ap.add_argument("--scale", choices=SCALES, default="penta")
     ap.add_argument("--no-midi", action="store_true")
     ap.add_argument("--no-visuals", action="store_true",
