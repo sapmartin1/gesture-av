@@ -6,5 +6,8 @@ PORT="${1:-8777}"
 URL="http://localhost:${PORT}/index.html"
 echo "▸ GestureAV DAW → ${URL}"
 echo "  (Chrome recommended for Web MIDI. Ctrl+C to stop.)"
-( sleep 1; open "$URL" 2>/dev/null || xdg-open "$URL" 2>/dev/null ) &
+# Web MIDI needs Chrome — Safari doesn't support it, so open Chrome explicitly.
+( sleep 1; open -a "Google Chrome" "$URL" 2>/dev/null \
+  || open -a "Chromium" "$URL" 2>/dev/null \
+  || { echo "⚠️  Chrome not found — install it; Safari can't do Web MIDI."; open "$URL"; } ) &
 exec python3 -m http.server "$PORT"
