@@ -3,34 +3,65 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GestureAV — DAW</title>
+  <title>GestureAV Live</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <canvas id="viz"></canvas>
-
-  <header class="topbar glass">
-    <div class="brand">
-      <span class="logo">◈</span>
-      <span class="title">GestureAV</span>
-      <span class="sub">/ studio</span>
+  <!-- ── transport bar ─────────────────────────────────────────────────── -->
+  <header id="transport">
+    <div class="tgroup brand"><b>GestureAV</b> <span>LIVE</span></div>
+    <div class="tgroup">
+      <label class="num"><span>BPM</span><input id="bpm" type="number" min="40" max="220" value="110" /></label>
+      <button id="metro" class="tbtn" title="metronome">🜁</button>
     </div>
-    <div id="midi-status" class="midi">○ connecting…</div>
-    <div class="vol-wrap">
-      <span>VOL</span>
-      <input id="vol" type="range" min="0" max="0.9" step="0.01" value="0.5" />
+    <div class="tgroup">
+      <button id="play" class="tbtn big" title="play">▶</button>
+      <button id="stop" class="tbtn big" title="stop">■</button>
+      <button id="rec" class="tbtn big rec" title="record into playing clip on armed track">●</button>
+    </div>
+    <div class="tgroup"><span id="pos" class="pos">1.1</span></div>
+    <div class="tgroup right">
+      <span id="midi-status" class="midi">○ MIDI</span>
+      <button id="bounce" class="tbtn" title="record master output to a file">⤓ Bounce</button>
+      <button id="save" class="tbtn">Save</button>
+      <button id="load" class="tbtn">Load</button>
+      <label class="num"><span>MASTER</span><input id="mastervol" type="range" min="0" max="1" step="0.01" value="0.8" /></label>
     </div>
   </header>
 
-  <section id="presets" class="presets glass"></section>
+  <div id="workspace">
+    <!-- ── browser ─────────────────────────────────────────────────────── -->
+    <aside id="browser">
+      <h3>Browser</h3>
+      <div class="bsec">Instruments</div>
+      <ul id="instr-list"></ul>
+      <div class="bsec">Drums</div>
+      <ul><li data-add="drums">Drum Rack</li></ul>
+      <div class="bsec">Sampler</div>
+      <ul><li data-add="sampler">Sampler (drop a sound)</li></ul>
+      <p class="bhint">Click to add a track.<br/>Drop an audio file onto a Sampler track's device panel.</p>
+    </aside>
 
-  <section id="knobs" class="knobs glass"></section>
+    <!-- ── session view ────────────────────────────────────────────────── -->
+    <section id="session">
+      <div id="grid"><!-- track columns + scene column injected --></div>
+    </section>
+  </div>
 
-  <footer class="kb-wrap glass">
-    <div id="keyboard" class="keyboard"></div>
-    <p class="hint">Play with your hands (pinch), a MIDI device, or your computer keyboard
-      <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd>… &nbsp; Left hand → mod / brightness.</p>
+  <!-- ── detail / device view ────────────────────────────────────────────── -->
+  <footer id="detail">
+    <div id="clip-editor">
+      <div class="dhead" id="clip-title">Clip</div>
+      <div id="editor-wrap"><canvas id="editor"></canvas></div>
+      <div class="editor-tools" id="editor-tools"></div>
+    </div>
+    <div id="devices">
+      <div class="dhead" id="dev-title">Devices</div>
+      <div id="dev-body"></div>
+    </div>
   </footer>
+
+  <div id="hint">Pinch (armed track) · QWERTY <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd>… plays · click clip slots to launch (bar-quantized) · double-click empty slot = new clip</div>
 
   <script type="module" src="js/app.js"></script>
 </body>
