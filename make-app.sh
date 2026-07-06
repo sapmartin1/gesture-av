@@ -31,6 +31,7 @@ PLIST
 
 cat > "$APP/Contents/MacOS/GestureAV" << LAUNCH
 #!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:\$PATH"   # app launches get a bare PATH
 REPO="$REPO"
 cd "\$REPO" || exit 1
 # stop any stale instances

@@ -137,33 +137,27 @@ def analyze_and_play(result, midi, state, scale, W, H):
     return render, bursts
 
 
-VIRTUAL_CAMS = ("iphone", "continuity", "camo", "obs", "virtual", "ipad")
+VIRTUAL_CAMS = ("iphone", "continuity", "camo", "obs", "virtual", "ipad", "desk view")
 
 
 def pick_camera_index():
     """Prefer the Mac's BUILT-IN camera over iPhone Continuity Camera etc.
-    macOS often makes the iPhone camera index 0, which surprises everyone."""
-    import subprocess as sp
-    out = sp.run(["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
-                 capture_output=True, text=True).stderr
-    devices = []
-    in_video = False
-    for line in out.splitlines():
-        if "AVFoundation video devices" in line:
-            in_video = True; continue
-        if "AVFoundation audio devices" in line:
-            break
-        if in_video:
-            m = __import__("re").search(r"\[(\d+)\]\s+(.*)$", line)
-            if m:
-                devices.append((int(m.group(1)), m.group(2).strip()))
-    if devices:
-        real = [d for d in devices
-                if not any(v in d[1].lower() for v in VIRTUAL_CAMS)]
-        chosen = real[0] if real else devices[0]
-        print(f"🎥 camera: [{chosen[0]}] {chosen[1]}"
-              + ("" if real else "  (only virtual cams found)"))
-        return chosen[0]
+    Uses system_profiler (always present on macOS — no ffmpeg dependency).
+    Never raises; falls back to index 0."""
+    try:
+        import json as _json
+        import subprocess as sp
+        out = sp.run(["/usr/sbin/system_profiler", "SPCameraDataType", "-json"],
+                     capture_output=True, text=True, timeout=15).stdout
+        cams = [c.get("_name", "") for c in _json.loads(out).get("SPCameraDataType", [])]
+        if cams:
+            for i, name in enumerate(cams):
+                if not any(v in name.lower() for v in VIRTUAL_CAMS):
+                    print(f"🎥 camera: [{i}] {name}")
+                    return i
+            print(f"🎥 camera: [0] {cams[0]}  (only virtual cams found)")
+    except Exception as e:
+        print(f"🎥 camera auto-pick failed ({e}); using index 0")
     return 0
 
 
