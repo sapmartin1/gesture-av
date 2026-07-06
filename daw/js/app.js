@@ -69,7 +69,14 @@ addEventListener("keyup", (e) => {
 
 // ---- Web MIDI (auto-connect GestureAV) --------------------------------------
 const midiStatus = document.getElementById("midi-status");
-if (navigator.requestMIDIAccess) {
+midiStatus.style.cursor = "pointer";
+midiStatus.title = "click to (re)connect MIDI";
+function initMidi() {
+  if (!navigator.requestMIDIAccess) {
+    midiStatus.textContent = "○ Web MIDI unsupported (use Chrome)";
+    return;
+  }
+  midiStatus.textContent = "○ connecting…";
   navigator.requestMIDIAccess({ sysex: false }).then((access) => {
     const wire = () => {
       let names = [];
@@ -77,14 +84,17 @@ if (navigator.requestMIDIAccess) {
         input.onmidimessage = onMidi; names.push(input.name);
       }
       const gav = names.find((x) => /gestureav/i.test(x));
-      midiStatus.textContent = gav ? `● ${gav}` : (names.length ? `● ${names[0]}` : "○ no MIDI");
+      midiStatus.textContent = gav ? `● ${gav}`
+        : (names.length ? `● ${names[0]}` : "○ no MIDI source — is tracking running?");
       midiStatus.classList.toggle("live", names.length > 0);
     };
     wire(); access.onstatechange = wire;
-  }).catch(() => { midiStatus.textContent = "○ MIDI blocked"; });
-} else {
-  midiStatus.textContent = "○ Web MIDI unsupported (use Chrome)";
+  }).catch(() => {
+    midiStatus.textContent = "○ MIDI blocked — click here, or allow MIDI in site settings";
+  });
 }
+midiStatus.onclick = initMidi;
+initMidi();
 function onMidi(e) {
   const [status, d1, d2] = e.data, cmd = status & 0xf0;
   if (cmd === 0x90 && d2 > 0) noteOn(d1, d2);
