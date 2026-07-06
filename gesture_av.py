@@ -52,12 +52,41 @@ def dist(a, b):
     return math.hypot(a.x - b.x, a.y - b.y)
 
 
-def pitch_from_height(y, scale):
-    """y in [0,1], top of frame = highest pitch."""
-    steps = len(scale) * OCTAVES
-    idx = max(0, min(steps - 1, int((1.0 - y) * steps)))
-    octave, deg = divmod(idx, len(scale))
-    return ROOT + octave * 12 + scale[deg]
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def note_name(n):
+    return f"{NOTE_NAMES[n % 12]}{n // 12 - 1}"
+
+
+def zone_from_y(y, n_zones, prev_zone):
+    """Map hand height to one of n_zones big bands, with hysteresis so the note
+    doesn't flicker at boundaries. Top of frame = highest zone."""
+    raw = (1.0 - y) * n_zones
+    zone = max(0, min(n_zones - 1, int(raw)))
+    if prev_zone is not None and zone != prev_zone:
+        frac = raw - int(raw)                     # position inside the new band
+        if zone == prev_zone + 1 and frac < 0.35:
+            zone = prev_zone                      # only just crossed up — stay
+        elif zone == prev_zone - 1 and frac > 0.65:
+            zone = prev_zone                      # only just crossed down — stay
+    return zone
+
+
+def zone_note(zone, scale, oct_base):
+    deg = zone % len(scale)
+    octv = zone // len(scale)
+    return ROOT + (oct_base + octv) * 12 + scale[deg]
+
+
+def chord_notes(zone, scale, oct_base):
+    """A triad built by stacking scale degrees from the selected zone."""
+    return [zone_note(zone + step, scale, oct_base) for step in (0, 2, 4)]
+
+
+def octave_from_left(y):
+    """Left hand height picks the octave: low hand = low octave."""
+    return [0, 1, 2, 3][max(0, min(3, int((1.0 - y) * 4)))]
 
 
 class MidiOut:
@@ -96,45 +125,66 @@ class Particle:
         return self.life > 0
 
 
-def analyze_and_play(result, midi, state, scale, W, H):
-    """Shared hand->MIDI logic. Returns (render_hands, bursts). Mutates state."""
+def _all_off(midi, state):
+    for n in state.get("right_notes", []):
+        midi.note_off(n)
+    state["right_notes"] = []
+    state["playing_zone"] = None
+
+
+def analyze_and_play(result, midi, state, scale, W, H, n_zones=6, chord=False):
+    """Zoned hand->MIDI. Big note bands + hysteresis + note-latch = playable.
+    Right hand = pitch (pinch to strike). Left hand = octave + filter. Chord opt."""
     render, bursts = [], []
+    hands = list(zip(result.hand_landmarks or [], result.handedness or []))
+
+    # left hand first → octave + expression
+    for lms, handed in hands:
+        if handed[0].category_name == "Left":
+            state["oct_base"] = octave_from_left(lms[MIDDLE_TIP].y)
+            openness = dist(lms[WRIST], lms[MIDDLE_TIP]) / (dist(lms[WRIST], lms[MIDDLE_MCP]) + 1e-6)
+            midi.cc(1, int(max(0, min(127, (1.0 - lms[MIDDLE_TIP].y) * 127))))
+            midi.cc(74, int(max(0, min(127, min(openness, 1.5) / 1.5 * 127))))
+    oct_base = state.get("oct_base", 1)
+
     right_pinch_now = False
-    for lms, handed in zip(result.hand_landmarks or [], result.handedness or []):
+    for lms, handed in hands:
         label = handed[0].category_name
         pts = [(int(p.x * W), int(p.y * H)) for p in lms]
         hand_size = dist(lms[WRIST], lms[MIDDLE_MCP]) + 1e-6
         pinch = dist(lms[THUMB_TIP], lms[INDEX_TIP]) / hand_size
-        openness = dist(lms[WRIST], lms[MIDDLE_TIP]) / hand_size
         info = {"label": label, "pts": pts, "pinch": pinch}
 
         if label == "Right":
-            right_pinch_now = pinch < 0.6
-            note = pitch_from_height(lms[INDEX_TIP].y, scale)
-            info["note"] = note
+            zone = zone_from_y(lms[INDEX_TIP].y, n_zones, state.get("prev_zone"))
+            state["prev_zone"] = zone
+            note = zone_note(zone, scale, oct_base)
+            info["zone"] = zone; info["note"] = note; info["note_label"] = note_name(note)
+            right_pinch_now = pinch < 0.5              # tighter → deliberate strike
             if right_pinch_now:
-                vel = int(max(20, min(127, (1.0 - pinch) * 160)))
+                vel = int(max(30, min(127, (1.0 - pinch) * 200)))
                 info["vel"] = vel
-                if not state["pinch_was"] or note != state["right_note"]:
-                    if state["right_note"] is not None:
-                        midi.note_off(state["right_note"])
-                    midi.note_on(note, vel)
-                    state["right_note"] = note
+                struck = not state["pinch_was"]        # new pinch = attack
+                moved = state.get("playing_zone") not in (None, zone)
+                if struck or moved:
+                    _all_off(midi, state)
+                    notes = chord_notes(zone, scale, oct_base) if chord else [note]
+                    for nn in notes:
+                        midi.note_on(nn, vel)
+                    state["right_notes"] = notes
+                    state["playing_zone"] = zone
                     mx = int((lms[THUMB_TIP].x + lms[INDEX_TIP].x) / 2 * W)
                     my = int((lms[THUMB_TIP].y + lms[INDEX_TIP].y) / 2 * H)
                     col = (int(120 + (note % 12) / 12 * 135), 255, int(120 + vel / 127 * 135))
                     bursts.append((mx, my, col, vel))
-        else:
-            cc1 = int(max(0, min(127, (1.0 - lms[MIDDLE_TIP].y) * 127)))
-            cc74 = int(max(0, min(127, min(openness, 1.5) / 1.5 * 127)))
-            midi.cc(1, cc1); midi.cc(74, cc74)
-            info["cc1"], info["cc74"] = cc1, cc74
         render.append(info)
 
-    if state["pinch_was"] and not right_pinch_now and state["right_note"] is not None:
-        midi.note_off(state["right_note"]); state["right_note"] = None
+    if state["pinch_was"] and not right_pinch_now:
+        _all_off(midi, state)
     state["pinch_was"] = right_pinch_now
-    return render, bursts
+    info_meta = {"n_zones": n_zones, "oct_base": oct_base, "scale": scale,
+                 "playing_zone": state.get("playing_zone"), "cur_zone": state.get("prev_zone")}
+    return render, bursts, info_meta
 
 
 VIRTUAL_CAMS = ("iphone", "continuity", "camo", "obs", "virtual", "ipad", "desk view")
@@ -183,7 +233,7 @@ def make_landmarker():
 def run_headless(args, midi, scale):
     landmarker = make_landmarker()
     cap = open_camera(args.camera, args.width, args.height)
-    state = {"right_note": None, "pinch_was": False}
+    state = {"pinch_was": False}
     t0 = time.time()
     print("🟢 GestureAV headless — tracking + MIDI only. Open ./daw for visuals. Ctrl+C to quit.")
     try:
@@ -194,14 +244,34 @@ def run_headless(args, midi, scale):
             rgb = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
             img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             res = landmarker.detect_for_video(img, int((time.time() - t0) * 1000))
-            analyze_and_play(res, midi, state, scale, args.width, args.height)
+            analyze_and_play(res, midi, state, scale, args.width, args.height,
+                             n_zones=args.zones, chord=args.chord)
             time.sleep(0.005)
     except KeyboardInterrupt:
         pass
     finally:
-        if state["right_note"] is not None:
-            midi.note_off(state["right_note"])
+        _all_off(midi, state)
         cap.release(); landmarker.close()
+
+
+def draw_zones(screen, font, meta, W, H):
+    """Draw the note bands so you can SEE where each note is. Highlights the
+    band your hand is in, and flashes the one you're playing."""
+    import pygame
+    scale = meta["scale"]; n = meta["n_zones"]; ob = meta["oct_base"]
+    band = H / n
+    for z in range(n):
+        top = int((n - 1 - z) * band)             # zone 0 at bottom (low), high at top
+        note = zone_note(z, scale, ob)
+        playing = meta["playing_zone"] == z
+        cur = meta["cur_zone"] == z
+        col = (30, 60, 45) if not (cur or playing) else ((60, 200, 120) if playing else (40, 90, 65))
+        s = pygame.Surface((160, int(band) - 2), pygame.SRCALPHA)
+        s.fill((*col, 150 if (cur or playing) else 60))
+        screen.blit(s, (0, top + 1))
+        lab = font.render(note_name(note), True,
+                          (230, 255, 240) if (cur or playing) else (120, 150, 135))
+        screen.blit(lab, (14, top + int(band / 2) - 10))
 
 
 def run_visual(args, midi, scale):
@@ -215,7 +285,7 @@ def run_visual(args, midi, scale):
     font = pygame.font.SysFont("Menlo", 20)
     clock = pygame.time.Clock()
     particles = []
-    state = {"right_note": None, "pinch_was": False}
+    state = {"pinch_was": False}
     t0 = time.time()
     running = True
     while running:
@@ -233,7 +303,9 @@ def run_visual(args, midi, scale):
         surf = pygame.image.frombuffer((small * 0.18).astype(np.uint8).tobytes(), (W, H), "RGB")
         screen.blit(surf, (0, 0))
 
-        render, bursts = analyze_and_play(res, midi, state, scale, W, H)
+        render, bursts, meta = analyze_and_play(res, midi, state, scale, W, H,
+                                                n_zones=args.zones, chord=args.chord)
+        draw_zones(screen, font, meta, W, H)
         for info in render:
             color = NEON if info["label"] == "Right" else CYAN
             pts = info["pts"]
@@ -257,15 +329,16 @@ def run_visual(args, midi, scale):
                 screen.blit(s, (p.x - p.size, p.y - p.size)); alive.append(p)
         particles = alive[-1500:]
 
-        head = "GestureAV  " + ("[MIDI: GestureAV]" if midi.port else "[visuals only]")
-        screen.blit(font.render(head, True, (200, 255, 220)), (12, 12))
-        screen.blit(font.render(f"{int(clock.get_fps())} fps  scale={args.scale}  Esc=quit",
-                                True, (90, 140, 120)), (12, H - 28))
+        now = "  ♪ " + note_name(zone_note(meta["playing_zone"], scale, meta["oct_base"])) \
+            if meta.get("playing_zone") is not None else ""
+        head = f"GestureAV  oct {meta['oct_base']}  {'chords' if args.chord else 'notes'}{now}"
+        screen.blit(font.render(head, True, (200, 255, 220)), (180, 12))
+        screen.blit(font.render("pinch to play · left hand = octave · Esc quits",
+                                True, (90, 140, 120)), (180, H - 28))
         pygame.display.flip()
         clock.tick(60)
 
-    if state["right_note"] is not None:
-        midi.note_off(state["right_note"])
+    _all_off(midi, state)
     landmarker.close(); cap.release(); pygame.quit()
 
 
@@ -279,6 +352,9 @@ def main():
                     help="tracking + MIDI only; use the web DAW for visuals")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
+    ap.add_argument("--zones", type=int, default=6,
+                    help="number of note bands (fewer = bigger, easier targets)")
+    ap.add_argument("--chord", action="store_true", help="pinch plays a chord, not one note")
     args = ap.parse_args()
 
     if not os.path.exists(MODEL):
